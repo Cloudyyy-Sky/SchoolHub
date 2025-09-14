@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
@@ -13,8 +13,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
-import { Upload, School, MapPin, Phone, Mail, ImageIcon } from "lucide-react"
+import { Upload, School, MapPin, Phone, Mail, ImageIcon, LogIn, Shield } from "lucide-react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+import type { User } from "@supabase/supabase-js"
 
 const schoolSchema = z.object({
   name: z.string().min(2, "School name must be at least 2 characters"),
@@ -29,9 +31,47 @@ const schoolSchema = z.object({
 type SchoolFormData = z.infer<typeof schoolSchema>
 
 export default function AddSchoolPage() {
+  const [user, setUser] = useState<User | null>(null)
+  const [isAuthLoading, setIsAuthLoading] = useState(true)
+  const router = useRouter()
+
   const [isLoading, setIsLoading] = useState(false)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const { toast } = useToast()
+
+  useEffect(() => {
+    const supabase = createClient()
+
+    const checkAuth = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      setUser(user)
+      setIsAuthLoading(false)
+
+      if (!user) {
+        toast({
+          title: "Authentication Required",
+          description: "Please log in to add schools.",
+          variant: "destructive",
+        })
+        router.push("/auth/login")
+      }
+    }
+
+    checkAuth()
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null)
+      if (!session?.user) {
+        router.push("/auth/login")
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [router, toast])
 
   const {
     register,
@@ -66,13 +106,22 @@ export default function AddSchoolPage() {
   }
 
   const onSubmit = async (data: SchoolFormData) => {
+    if (!user) {
+      toast({
+        title: "Authentication Required",
+        description: "Please log in to add schools.",
+        variant: "destructive",
+      })
+      router.push("/auth/login")
+      return
+    }
+
     setIsLoading(true)
     const supabase = createClient()
 
     try {
       let imageUrl = null
 
-      // Handle image upload if provided
       if (data.image && data.image instanceof File) {
         const fileExt = data.image.name.split(".").pop()
         const fileName = `${Date.now()}.${fileExt}`
@@ -96,7 +145,6 @@ export default function AddSchoolPage() {
         imageUrl = publicUrl
       }
 
-      // Insert school data
       const { error: insertError } = await supabase.from("schools").insert({
         name: data.name,
         address: data.address,
@@ -105,6 +153,7 @@ export default function AddSchoolPage() {
         contact: Number.parseInt(data.contact),
         email_id: data.email_id,
         image: imageUrl,
+        created_by: user.id,
       })
 
       if (insertError) {
@@ -136,12 +185,59 @@ export default function AddSchoolPage() {
     }
   }
 
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Card className="w-full max-w-md">
+          <CardContent className="flex flex-col items-center justify-center py-8">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent mb-4" />
+            <p className="text-muted-foreground">Checking authentication...</p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-4 p-3 bg-primary/10 rounded-full w-fit">
+              <Shield className="h-8 w-8 text-primary" />
+            </div>
+            <CardTitle className="text-xl">Authentication Required</CardTitle>
+            <CardDescription>You need to be logged in to add schools to the system.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Button asChild className="w-full">
+              <Link href="/auth/login">
+                <LogIn className="mr-2 h-4 w-4" />
+                Login to Continue
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="w-full bg-transparent">
+              <Link href="/schools">
+                <School className="mr-2 h-4 w-4" />
+                View Schools Instead
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-background p-4 md:p-8">
       <div className="mx-auto max-w-2xl">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold text-foreground mb-2 text-balance">Add New School</h1>
           <p className="text-muted-foreground text-pretty">Register a new educational institution in our database</p>
+          <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 bg-primary/10 rounded-full text-sm text-primary">
+            <Shield className="h-4 w-4" />
+            Logged in as {user.email}
+          </div>
         </div>
 
         <Card className="shadow-lg border-border/50">
@@ -155,7 +251,6 @@ export default function AddSchoolPage() {
 
           <CardContent>
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-              {/* School Name */}
               <div className="space-y-2">
                 <Label htmlFor="name" className="text-sm font-medium">
                   School Name *
@@ -171,7 +266,6 @@ export default function AddSchoolPage() {
                 )}
               </div>
 
-              {/* Address */}
               <div className="space-y-2">
                 <Label htmlFor="address" className="text-sm font-medium flex items-center gap-2">
                   <MapPin className="h-4 w-4" />
@@ -188,7 +282,6 @@ export default function AddSchoolPage() {
                 )}
               </div>
 
-              {/* City and State */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="city" className="text-sm font-medium">
@@ -221,7 +314,6 @@ export default function AddSchoolPage() {
                 </div>
               </div>
 
-              {/* Contact and Email */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="contact" className="text-sm font-medium flex items-center gap-2">
@@ -259,7 +351,6 @@ export default function AddSchoolPage() {
                 </div>
               </div>
 
-              {/* Image Upload */}
               <div className="space-y-2">
                 <Label htmlFor="image" className="text-sm font-medium flex items-center gap-2">
                   <ImageIcon className="h-4 w-4" />
@@ -303,7 +394,6 @@ export default function AddSchoolPage() {
                 </div>
               </div>
 
-              {/* Submit Button */}
               <div className="flex flex-col sm:flex-row gap-4 pt-4">
                 <Button
                   type="submit"
